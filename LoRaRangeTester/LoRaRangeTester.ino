@@ -24,7 +24,7 @@
 
 // ─── Конфигурация устройства ─────────────────────────────────────────────────
 // Менять DEVICE_NAME для каждого устройства (становится SSID точки доступа)
-#define DEVICE_NAME   "LoRa-01"
+#define DEVICE_NAME   "LoRa-02"
 #define WIFI_PASSWORD "1223334444"
 
 // ─── Роли ────────────────────────────────────────────────────────────────────
@@ -562,7 +562,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#f0f4f8;color:#1a
 <div class="card">
   <div class="card-header">
     <h1>GPS</h1>
-    <span id="gpsStatus" class="gps-off" style="font-size:13px;font-family:ui-monospace,monospace">Инициализация...</span>
+    <span id="gpsStatus" class="gps-search" style="font-size:13px;font-family:ui-monospace,monospace">Search</span>
   </div>
 </div>
 <div class="card">
@@ -693,7 +693,8 @@ document.querySelectorAll('input,select').forEach(el=>{
 
 setInterval(pollLog,2000);
 setInterval(pollStatus,2000);
-pollLog(); pollStatus();
+pollLog();
+setTimeout(pollStatus,1000); // сдвиг 1с — не отправлять два запроса одновременно
 </script>
 </body></html>
 )rawliteral";

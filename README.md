@@ -1,5 +1,7 @@
 # LoRa Range Tester
 
+![LoRa Range Tester](img.png)
+
 Firmware for LoRa range testing on the **Heltec WiFi LoRa 32 V4** board (ESP32-S3 + SX1262).
 
 One firmware — two devices. The **Sender** or **Receiver** role is selected via the web interface and saved to non-volatile memory. Two boards with identical firmware are enough for a range test.

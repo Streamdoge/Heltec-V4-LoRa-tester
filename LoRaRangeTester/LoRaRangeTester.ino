@@ -33,12 +33,12 @@
 
 // ─── Параметры LoRa по умолчанию ─────────────────────────────────────────────
 #define DEFAULT_FREQUENCY  868000000UL   // 868 МГц (EU)
-#define DEFAULT_SF         9             // SF9
+#define DEFAULT_SF         7             // SF7
 #define DEFAULT_BW         0             // 0=125kHz, 1=250kHz, 2=500kHz
 #define DEFAULT_CR         1             // 1=4/5, 2=4/6, 3=4/7, 4=4/8
 #define DEFAULT_PREAMBLE   8
-#define DEFAULT_TX_POWER   20            // dBm (макс 22 для V4)
-#define DEFAULT_INTERVAL   5000UL        // мс
+#define DEFAULT_TX_POWER   14            // dBm (макс 22 для V4)
+#define DEFAULT_INTERVAL   3000UL        // мс
 
 #define BUFFER_SIZE                50
 
@@ -201,17 +201,22 @@ void resetSession() {
 }
 
 void loadSettings() {
-  preferences.begin("lora-cfg", true);
-  currentRole   = preferences.getUChar("role",      ROLE_SENDER);
-  loraFrequency = preferences.getUInt("frequency",  DEFAULT_FREQUENCY);
-  loraSF        = preferences.getUChar("sf",        DEFAULT_SF);
-  loraBW        = preferences.getUChar("bw",        DEFAULT_BW);
-  loraCR        = preferences.getUChar("cr",        DEFAULT_CR);
-  loraPreamble  = preferences.getUInt("preamble",   DEFAULT_PREAMBLE);
-  txPower       = preferences.getUChar("power",     DEFAULT_TX_POWER);
-  txInterval    = preferences.getUInt("interval",   DEFAULT_INTERVAL);
-  gpsEnabled    = preferences.getBool("gps_en",     true);
-  preferences.end();
+  bool firstBoot = !preferences.begin("lora-cfg", true);  // true = read-only
+  if (firstBoot) {
+    // Namespace не существует — первая прошивка или NVS стёрт
+    Serial.println("[NVS] first boot, saving defaults");
+  } else {
+    currentRole   = preferences.getUChar("role",      ROLE_SENDER);
+    loraFrequency = preferences.getUInt("frequency",  DEFAULT_FREQUENCY);
+    loraSF        = preferences.getUChar("sf",        DEFAULT_SF);
+    loraBW        = preferences.getUChar("bw",        DEFAULT_BW);
+    loraCR        = preferences.getUChar("cr",        DEFAULT_CR);
+    loraPreamble  = preferences.getUInt("preamble",   DEFAULT_PREAMBLE);
+    txPower       = preferences.getUChar("power",     DEFAULT_TX_POWER);
+    txInterval    = preferences.getUInt("interval",   DEFAULT_INTERVAL);
+    gpsEnabled    = preferences.getBool("gps_en",     true);
+    preferences.end();
+  }
 
   resetSession();  // устанавливает CSV-заголовок и обнуляет счётчики
 
@@ -230,7 +235,10 @@ void loadSettings() {
 }
 
 void saveSettings() {
-  preferences.begin("lora-cfg", false);
+  if (!preferences.begin("lora-cfg", false)) {
+    Serial.println("[NVS] failed to open for write!");
+    return;
+  }
   preferences.putUChar("role",     currentRole);
   preferences.putUInt("frequency", loraFrequency);
   preferences.putUChar("sf",       loraSF);
@@ -304,7 +312,7 @@ void updateDisplay() {
     uint8_t loss = (N > 0 && N >= packetCount) ? (uint8_t)((N - packetCount) * 100 / N) : 0;
     line3 = "Loss:" + String(loss) + "% SNR:" + String(lastSnr);
   } else {
-    line3 = String(txInterval / 1000.0, 1) + "s " + String(txPower) + "dBm";
+    line3 = String(txInterval / 1000.0, 1) + "s SF" + String(loraSF);
   }
 
   display.clear();
@@ -430,6 +438,7 @@ void updateLoRaSettings() {
   if (currentRole == ROLE_SENDER)
     msg += " | Power:" + String(txPower) + "dBm";
   addToSerialLog(msg);
+  updateDisplay();
 }
 
 // Переключить конфигурацию радио под текущую роль (TX или RX)
@@ -946,6 +955,7 @@ void setup() {
 
   // Task 4: настройки из NVS (первым делом — addToSerialLog уже работает)
   loadSettings();
+  saveSettings();  // создаёт namespace если его нет, на нормальном старте — перезаписывает теми же значениями
 
   // Task 2: дисплей
   initDisplay();
@@ -960,6 +970,8 @@ void setup() {
 
   // Task 1: WiFi AP
   addToSerialLog("WiFi AP: " + String(DEVICE_NAME));
+  WiFi.persistent(false);  // не писать конфиг WiFi в NVS — избегает конфликтов с Preferences
+  WiFi.mode(WIFI_AP);
   WiFi.softAP(DEVICE_NAME, WIFI_PASSWORD);
   addToSerialLog("IP: " + WiFi.softAPIP().toString());
 

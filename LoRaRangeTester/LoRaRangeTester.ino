@@ -89,6 +89,7 @@ unsigned long lastTxTime = 0;
 HardwareSerial gpsSerial(1);
 TinyGPSPlus    gps;
 unsigned long  lastGpsLogTime = 0;
+bool           gpsEnabled     = true;   // false = GPS обесточен (P-MOS HIGH)
 
 // Буферы логов
 String serialLog = "";
@@ -209,6 +210,7 @@ void loadSettings() {
   loraPreamble  = preferences.getUInt("preamble",   DEFAULT_PREAMBLE);
   txPower       = preferences.getUChar("power",     DEFAULT_TX_POWER);
   txInterval    = preferences.getUInt("interval",   DEFAULT_INTERVAL);
+  gpsEnabled    = preferences.getBool("gps_en",     true);
   preferences.end();
 
   resetSession();  // устанавливает CSV-заголовок и обнуляет счётчики
@@ -237,6 +239,7 @@ void saveSettings() {
   preferences.putUInt("preamble",  loraPreamble);
   preferences.putUChar("power",    txPower);
   preferences.putUInt("interval",  txInterval);
+  preferences.putBool("gps_en",    gpsEnabled);
   preferences.end();
 }
 
@@ -326,19 +329,20 @@ void updateDisplay() {
 //  TASK 6 — GPS (Quectel L76K, TinyGPS++, UART1)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Возвращает "lat,lon,satellites" для CSV.
-// 0=нет данных (Error), 1=поиск (Search), 2=фикс (Find)
-// Error — только если прошло 30с с момента инициализации GPS UART, а данных нет
+// Возвращает состояние GPS:
+// 0=нет данных (Error), 1=поиск (Search), 2=фикс (Find), 3=выключен (OFF)
 uint8_t getGPSState() {
+  if (!gpsEnabled) return 3;
   if (gps.charsProcessed() == 0)
     return (gpsInitTime > 0 && millis() - gpsInitTime > 30000) ? 0 : 1;
   if (!gps.location.isValid()) return 1;
   return 2;
 }
 
-// Если нет фикса — "0.000000,0.000000,0".
+// Возвращает "lat,lon,satellites" для CSV.
+// Если GPS выключен или нет фикса — "0.000000,0.000000,0".
 String getGPSString() {
-  if (!gps.location.isValid())
+  if (!gpsEnabled || !gps.location.isValid())
     return "0.000000,0.000000,0";
   return String(gps.location.lat(), 6) + "," +
          String(gps.location.lng(), 6) + "," +
@@ -348,14 +352,39 @@ String getGPSString() {
 // Строка для дисплея — использует ту же логику что и веб
 String getGPSDisplayString() {
   uint8_t state = getGPSState();
+  if (state == 3) return "GPS: OFF";
   if (state == 0) return "GPS: Error";
   if (state == 1) return "GPS: Search";
   int sats = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
   return "GPS: Find " + String(sats) + " sat";
 }
 
+// Включить GPS: подать питание, запустить UART
+void enableGPS() {
+  gpsEnabled = true;
+  gps = TinyGPSPlus();                 // сбросить устаревшие данные предыдущего сеанса
+  digitalWrite(VGNSS_CTRL_PIN, LOW);   // P-MOS: LOW = GPS запитан
+  gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  gpsInitTime = millis();
+  saveSettings();
+  addToSerialLog("GPS ON");
+  updateDisplay();
+}
+
+// Выключить GPS: остановить UART, снять питание
+void disableGPS() {
+  gpsEnabled = false;
+  gpsSerial.end();
+  digitalWrite(VGNSS_CTRL_PIN, HIGH);  // P-MOS: HIGH = GPS обесточен
+  saveSettings();
+  addToSerialLog("GPS OFF");
+  updateDisplay();
+}
+
 // Опрос GPS — вызывать в каждом цикле loop()
 void pollGPS() {
+  if (!gpsEnabled) return;
+
   while (gpsSerial.available())
     gps.encode(gpsSerial.read());
 
@@ -644,7 +673,8 @@ function pollStatus(){
     q('interval').value=(d.interval/1000).toFixed(1);
     // GPS статус
     const gs=q('gpsStatus');
-    if(d.gps_state===2){gs.textContent='Find '+d.gps_sats+' sat';gs.className='gps-ok';}
+    if(!d.gps_enabled){gs.textContent='OFF';gs.className='gps-off';}
+    else if(d.gps_state===2){gs.textContent='Find '+d.gps_sats+' sat';gs.className='gps-ok';}
     else if(d.gps_state===1){gs.textContent='Search';gs.className='gps-search';}
     else{gs.textContent='Error';gs.className='gps-off';}
   }).catch(()=>{});
@@ -826,9 +856,10 @@ void handleStatus() {
   json += "\"preamble\":"  + String(loraPreamble)             + ",";
   json += "\"power\":"     + String(txPower)                  + ",";
   json += "\"interval\":"  + String(txInterval)               + ",";
-  json += "\"gps_state\":" + String(getGPSState())            + ",";
-  json += "\"gps_sats\":"  + String(gps.satellites.isValid() ? (int)gps.satellites.value() : 0) + ",";
-  json += "\"vbat\":"      + String(cachedBatVoltage, 2);
+  json += "\"gps_state\":"   + String(getGPSState())            + ",";
+  json += "\"gps_sats\":"   + String(gps.satellites.isValid() ? (int)gps.satellites.value() : 0) + ",";
+  json += "\"gps_enabled\":" + String(gpsEnabled ? "true" : "false") + ",";
+  json += "\"vbat\":"        + String(cachedBatVoltage, 2);
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -882,6 +913,11 @@ void handleUserButtonDoubleClick() {
   reinitLoRaForRole();
   addToSerialLog("Role → " + String(currentRole == ROLE_SENDER ? "SENDER" : "RECEIVER"));
   updateDisplay();
+}
+
+void handleUserButtonTripleClick() {
+  if (gpsEnabled) disableGPS();
+  else            enableGPS();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -950,10 +986,15 @@ void setup() {
   pinMode(GPS_RST_PIN, OUTPUT);
   digitalWrite(GPS_RST_PIN, HIGH);     // HIGH = GPS не в сбросе (разделяет с RST_OLED)
   pinMode(VGNSS_CTRL_PIN, OUTPUT);
-  digitalWrite(VGNSS_CTRL_PIN, LOW);   // AO3401A P-MOS: LOW = GPS запитан
-  gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  gpsInitTime = millis();
-  addToSerialLog("GPS UART started (RX:" + String(GPS_RX_PIN) + " TX:" + String(GPS_TX_PIN) + ")");
+  if (gpsEnabled) {
+    digitalWrite(VGNSS_CTRL_PIN, LOW); // AO3401A P-MOS: LOW = GPS запитан
+    gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+    gpsInitTime = millis();
+    addToSerialLog("GPS UART started (RX:" + String(GPS_RX_PIN) + " TX:" + String(GPS_TX_PIN) + ")");
+  } else {
+    digitalWrite(VGNSS_CTRL_PIN, HIGH); // P-MOS: HIGH = GPS обесточен
+    addToSerialLog("GPS disabled (saved state)");
+  }
 
   // Task 5: LoRa SX1262 (RadioLib)
   reinitLoRaForRole();
@@ -997,13 +1038,17 @@ void loop() {
   // Кнопка USER (GPIO 0): state machine
   //   1 клик          → старт/стоп
   //   2 быстрых клика → смена роли
+  //   3 быстрых клика → вкл/выкл GPS
   //   Удержание 5с    → глубокий сон
   {
-    enum BtnState : uint8_t { BTN_IDLE, BTN_PRESSED_1, BTN_WAIT_DOUBLE, BTN_PRESSED_2 };
+    enum BtnState : uint8_t {
+      BTN_IDLE, BTN_PRESSED_1, BTN_WAIT_2,
+      BTN_PRESSED_2, BTN_WAIT_3, BTN_PRESSED_3
+    };
     static BtnState      btnState       = BTN_IDLE;
     static unsigned long btnPressTime   = 0;
     static unsigned long btnReleaseTime = 0;
-    static const unsigned long DOUBLE_MS = 400;   // окно ожидания второго клика, мс
+    static const unsigned long DOUBLE_MS = 400;   // окно ожидания следующего клика, мс
     static const unsigned long SLEEP_MS  = 5000;  // порог удержания для сна, мс
 
     bool btnNow = (digitalRead(0) == LOW);
@@ -1019,7 +1064,7 @@ void loop() {
             btnSleepFired = false;
             btnState = BTN_IDLE;
           } else {
-            btnState = BTN_WAIT_DOUBLE;
+            btnState = BTN_WAIT_2;
             btnReleaseTime = millis();
           }
         } else if (!btnSleepFired && millis() - btnPressTime >= SLEEP_MS) {
@@ -1028,10 +1073,9 @@ void loop() {
         }
         break;
 
-      case BTN_WAIT_DOUBLE:
+      case BTN_WAIT_2:
         if (btnNow) {
-          handleUserButtonDoubleClick(); // второй клик → смена роли
-          btnState = BTN_PRESSED_2;
+          btnState = BTN_PRESSED_2;    // второй клик — ждём третьего или отпускания
         } else if (millis() - btnReleaseTime >= DOUBLE_MS) {
           handleUserButtonShort();      // одиночный клик → старт/стоп
           btnState = BTN_IDLE;
@@ -1039,6 +1083,23 @@ void loop() {
         break;
 
       case BTN_PRESSED_2:
+        if (!btnNow) {
+          btnState = BTN_WAIT_3;
+          btnReleaseTime = millis();
+        }
+        break;
+
+      case BTN_WAIT_3:
+        if (btnNow) {
+          handleUserButtonTripleClick(); // третий клик → вкл/выкл GPS
+          btnState = BTN_PRESSED_3;
+        } else if (millis() - btnReleaseTime >= DOUBLE_MS) {
+          handleUserButtonDoubleClick(); // двойной клик → смена роли
+          btnState = BTN_IDLE;
+        }
+        break;
+
+      case BTN_PRESSED_3:
         if (!btnNow) btnState = BTN_IDLE;
         break;
     }

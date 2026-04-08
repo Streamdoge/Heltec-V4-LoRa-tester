@@ -59,7 +59,7 @@ Install via Boards Manager:
 Before flashing each device, edit at the top of the file:
 
 ```cpp
-#define DEVICE_NAME   "DLRP-01"   // Wi-Fi SSID — must be unique per device
+#define DEVICE_NAME   "LoRa-01"   // Wi-Fi SSID — must be unique per device
 #define WIFI_PASSWORD "1223334444" // Wi-Fi password
 ```
 

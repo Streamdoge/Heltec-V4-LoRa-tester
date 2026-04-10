@@ -135,6 +135,7 @@ The console updates every 2 seconds. All LoRa setting changes are applied immedi
 |--------|----------|
 | **1 click** | Start / Stop transmission or reception |
 | **2 quick clicks** | Switch role Sender ↔ Receiver |
+| **3 quick clicks** | GPS On / Off |
 | **Hold 5 s** | Enter deep sleep |
 | **Hold 5 s** (from sleep) | Wake up |
 
